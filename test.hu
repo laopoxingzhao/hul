@@ -1,0 +1,22 @@
+let x = 10;
+let y = 20;
+let sum = x + y/10;
+print sum;
+
+if (sum > 25) {
+    print "big";
+} else {
+    print "small";
+}
+
+let i = 0;
+while (i < 5) {
+    print i;
+    i = i + 1;
+}
+
+// 假值测试
+let a = 0;
+if (a) { print "0 is true"; }
+if (nil) { print "nil is true"; }
+if (false) { print "false is true"; }
