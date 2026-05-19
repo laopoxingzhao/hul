@@ -13,7 +13,7 @@ use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
 /// - `String(String)`: 字符串类型，用于存储文本
 /// - `Boolean(bool)`: 布尔类型，用于存储真/假值
 /// - `Nil`: 空值/无值，表示未初始化或不返回任何值
-#[derive(Debug, Clone,PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     /// 数值类型 - 使用 f64 存储浮点数
     Number(f64),

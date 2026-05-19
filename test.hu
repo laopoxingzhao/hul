@@ -1,9 +1,10 @@
 let x = 10;
 let y = 20;
+x=50;
 let sum = x + y/10;
 print sum;
 
-if (sum > 25) {
+if (sum > 25)  {
     print "big";
 } else {
     print "small";

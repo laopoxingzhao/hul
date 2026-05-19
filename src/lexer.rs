@@ -296,7 +296,7 @@ impl Lexer {
 ///
 /// 迭代流程：
 /// 1. 跳过空白字符
-/// 2. 检测并跳过单行注释 `//`
+/// 2. 检测并跳过单行注释 `//` 和 多行注释 `/* ... */`
 /// 3. 根据首字符识别 Token 类型
 /// 4. 返回 Token 或 None（到达 EOF）
 
@@ -316,7 +316,9 @@ impl Iterator for Lexer {
 
         // 获取当前字符，若无字符则返回 EOF token（仅一次）
         let ch = match self.peek() {
-            Some(ch) => ch,
+            Some(ch) => {
+                ch
+            },
             None => {
                 return None;
             }
@@ -329,13 +331,24 @@ impl Iterator for Lexer {
                 // 跳过注释内容，然后递归获取下一个 Token
                 self.skip_line_comment();
                 return self.next();
-            } else {
-                // 目前只支持单行注释，单独 / 视为非法（可扩展为除号）
-                panic!(
-                    "Unexpected character '/' at line {} col {}",
-                    self.line, self.col
-                );
-            }
+            } else if self.peek() == Some('*') {
+                // 多行注释 /* ... */
+                // TODO: 实现多行注释支持
+                
+                self.advance();
+                while let Some(ch) = self.peek() {
+                    self.advance();
+                    if ch == '*' && self.peek() == Some('/') {
+                        self.advance();
+                        break;
+                    }
+                }
+                return self.next();
+
+            } 
+            // 除号运算符：直接返回 Slash token
+            return Some(self.make_token(TokenType::Slash));
+            
         }
 
         // 步骤3：根据首字符识别 Token 类型
