@@ -34,10 +34,14 @@ impl Parser {
     ///
     /// # 返回
     /// 初始化后的 Parser 实例，已完成词法分析
-    pub fn new(source: &str) -> Self {
-        let lexer = Lexer::new(source);
-        let tokens: Vec<_> = lexer.collect();
-        Parser { tokens, current: 0 }
+    pub fn new(source: &str) -> Result<Self, String> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens()?;
+        Ok(Parser { tokens, current: 0 })
+    }
+
+    fn current_token(&self) -> Option<&Token> {
+        self.tokens.get(self.current)
     }
 
     /// 查看当前 Token 的类型（不移动位置）
@@ -45,8 +49,7 @@ impl Parser {
     /// # 返回
     /// 当前 Token 的类型，如果已到达末尾则返回 Eof
     fn peek(&self) -> TokenType {
-        self.tokens
-            .get(self.current)
+        self.current_token()
             .map(|t| t.ty.clone())
             .unwrap_or(TokenType::Eof)
     }
@@ -84,9 +87,10 @@ impl Parser {
     fn expect(&mut self, expected: TokenType, msg: &str) -> Result<Token, String> {
         if self.check(expected) {
             Ok(self.advance())
+        } else if let Some(tok) = self.current_token() {
+            Err(format!("{} at {:?} ({}:{})", msg, tok.ty, tok.line, tok.col))
         } else {
-            let tok = self.tokens.get(self.current).cloned();
-            Err(format!("{} at {:?}", msg, tok))
+            Err(format!("{} at end of input", msg))
         }
     }
 
@@ -115,7 +119,8 @@ impl Parser {
     fn statement(&mut self) -> Result<Stmt, String> {
         match self.peek() {
             TokenType::Let => self.let_statement(),
-
+            TokenType::Fn => self.fn_statement(),
+            TokenType::Return => self.return_statement(),
             TokenType::If => self.if_statement(),
             TokenType::While => self.while_statement(),
             TokenType::Print => self.print_statement(),
@@ -175,7 +180,7 @@ impl Parser {
     /// 支持：
     /// - 基本 if 语句
     /// - if-else 语句
-    /// - else-if 链式结构
+    // / - else-if 链式结构
     ///
     /// # 返回
     /// If 语句节点
@@ -245,12 +250,15 @@ impl Parser {
     /// 表达式后必须跟分号，常用于赋值表达式
     ///
     /// # 返回
-    /// Expression 语句节点
+    /// 语句节点
     fn expression_statement(&mut self) -> Result<Stmt, String> {
         let expr = self.expression()?;
-        // 允许赋值表达式
-        if let Expr::Binary { .. } = &expr {} // 赋值由 expression 内的逻辑处理
         self.expect(TokenType::Semicolon, "Expected ';'")?;
+
+        if let Expr::Assign { name, value } = expr {
+            return Ok(Stmt::Assign { name, value: *value });
+        }
+
         Ok(Stmt::Expression(expr))
     }
 
@@ -266,6 +274,35 @@ impl Parser {
         self.parse_assignment()
     }
 
+    /// 解析函数调用或者基础表达式
+    fn parse_call(&mut self) -> Result<Expr, String> {
+        let mut expr = self.parse_primary()?;
+        while self.check(TokenType::LParen) {
+            expr = self.finish_call(expr)?;
+        }
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr, String> {
+        self.expect(TokenType::LParen, "Expected '(' after function name")?;
+        let mut arguments = Vec::new();
+        if !self.check(TokenType::RParen) {
+            loop {
+                arguments.push(self.expression()?);
+                if self.check(TokenType::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenType::RParen, "Expected ')' after arguments")?;
+        Ok(Expr::Call {
+            callee: Box::new(callee),
+            arguments,
+        })
+    }
+
     /// 解析赋值表达式 `var = expr`
     ///
     /// 赋值是右结合的，支持链式赋值
@@ -279,15 +316,12 @@ impl Parser {
             self.advance();
             let value = self.parse_assignment()?;
             if let Expr::Variable(name) = expr {
-                // 正确保留变量名，让解释器能够识别并执行赋值
-                return Ok(Expr::Binary {
-                    left: Box::new(Expr::Variable(name)),
-                    operator: BinaryOp::Add, // dummy operator, 解释器会特殊处理
-                    right: Box::new(value),
+                return Ok(Expr::Assign {
+                    name,
+                    value: Box::new(value),
                 });
-            } else {
-                return Err("Invalid assignment target".to_string());
             }
+            return Err("Invalid assignment target".to_string());
         }
         Ok(expr)
     }
@@ -443,7 +477,7 @@ impl Parser {
                 right: Box::new(right),
             })
         } else {
-            self.parse_primary()
+            self.parse_call()
         }
     }
 
@@ -488,8 +522,44 @@ impl Parser {
                 self.expect(TokenType::RParen, "Expected ')'")?;
                 Ok(Expr::Grouping(Box::new(expr)))
             }
-            _ => Err(format!("Unexpected token: {:?}", self.peek())),
+            _ => {
+                if let Some(tok) = self.current_token() {
+                    Err(format!("Unexpected token {:?} at {}:{}", tok.ty, tok.line, tok.col))
+                } else {
+                    Err("Unexpected end of input".to_string())
+                }
+            }
         }
+    }
+
+    fn fn_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(TokenType::Fn, "Expected 'fn'")?;
+        let name = self.expect_identifier("Expected function name")?;
+        self.expect(TokenType::LParen, "Expected '(' after function name")?;
+        let mut params = Vec::new();
+        if !self.check(TokenType::RParen) {
+            loop {
+                params.push(self.expect_identifier("Expected parameter name")?);
+                if self.check(TokenType::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenType::RParen, "Expected ')' after parameters")?;
+        let body = match self.block_statement()? {
+            Stmt::Block(stmts) => stmts,
+            _ => unreachable!(),
+        };
+        Ok(Stmt::Function { name, params, body })
+    }
+
+    fn return_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(TokenType::Return, "Expected 'return'")?;
+        let value = self.expression()?;
+        self.expect(TokenType::Semicolon, "Expected ';' after return")?;
+        Ok(Stmt::Return(value))
     }
 
     /// 期望当前 Token 为标识符

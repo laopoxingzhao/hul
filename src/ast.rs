@@ -16,7 +16,7 @@ use crate::value::Value;
 /// - `While`: 循环语句，当条件为真时重复执行
 /// - `Block`: 代码块语句，由大括号包围的多个语句
 /// - `Expression`: 表达式语句，单独的表达式（通常用于赋值）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     /// 变量声明语句
     /// - `name`: 变量名称
@@ -48,6 +48,18 @@ pub enum Stmt {
     /// 表达式语句
     /// - 将表达式作为独立语句执行（常用于赋值表达式）
     Expression(Expr),
+    /// 返回语句
+    /// - 在函数体内结束执行并返回一个值
+    Return(Expr),
+    /// 函数声明
+    /// - `name`: 函数名
+    /// - `params`: 参数列表
+    /// - `body`: 函数体语句列表
+    Function {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Stmt>,
+    },
 }
 
 /// 表达式枚举 - 表示 Hul 语言中的所有表达式类型
@@ -59,7 +71,7 @@ pub enum Stmt {
 /// - `Unary`: 一元运算表达式（取负、逻辑非）
 /// - `Logical`: 逻辑运算表达式（and、or，支持短路求值）
 /// - `Grouping`: 分组表达式（圆括号括起来的子表达式）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// 字面量表达式
     /// - 直接包含一个 Value 值
@@ -67,6 +79,10 @@ pub enum Expr {
     /// 变量引用表达式
     /// - 包含变量名称字符串
     Variable(String),
+    /// 赋值表达式
+    /// - `name`: 变量名称
+    /// - `value`: 赋值表达式或值
+    Assign { name: String, value: Box<Expr> },
     /// 二元运算表达式
     /// - `left`: 左操作数
     /// - `operator`: 二元运算符
@@ -92,6 +108,13 @@ pub enum Expr {
     /// 分组表达式
     /// - 用于改变运算优先级，如 `(a + b) * c`
     Grouping(Box<Expr>),
+    /// 函数调用表达式
+    /// - `callee`: 被调用的表达式
+    /// - `arguments`: 参数列表
+    Call {
+        callee: Box<Expr>,
+        arguments: Vec<Expr>,
+    },
 }
 
 /// 二元运算符枚举

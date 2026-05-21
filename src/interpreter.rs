@@ -10,6 +10,11 @@ use crate::value::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+enum ControlFlow {
+    Normal,
+    Return(ValueRef),
+}
+
 /// 解释器结构体
 ///
 /// 维护当前的执行环境（作用域链），负责：
@@ -18,7 +23,7 @@ use std::rc::Rc;
 /// - 管理变量绑定和作用域
 pub struct Interpreter {
     /// 当前执行环境的引用（支持嵌套作用域）
-    env: Rc<RefCell<Environment>>,
+    pub env: Rc<RefCell<Environment>>,
 }
 
 impl Interpreter {
@@ -44,7 +49,12 @@ impl Interpreter {
     /// - `Err(String)`: 运行时错误信息
     pub fn interpret(&mut self, stmts: &[Stmt]) -> Result<(), String> {
         for stmt in stmts {
-            self.exec_stmt(stmt)?;
+            match self.exec_stmt(stmt)? {
+                ControlFlow::Normal => (),
+                ControlFlow::Return(_) => {
+                    return Err("Unexpected return outside function".to_string())
+                }
+            }
         }
         Ok(())
     }
@@ -59,24 +69,43 @@ impl Interpreter {
     /// # 返回
     /// - `Ok(())`: 执行成功
     /// - `Err(String)`: 运行时错误
-    fn exec_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+    fn exec_stmt(&mut self, stmt: &Stmt) -> Result<ControlFlow, String> {
         match stmt {
+            // 函数声明：将函数对象绑定到当前环境
+            Stmt::Function { name, params, body } => {
+                let function = Function {
+                    name: name.clone(),
+                    params: params.clone(),
+                    body: body.clone(),
+                    closure: self.env.clone(),
+                };
+                self.env
+                    .borrow_mut()
+                    .define(name.clone(), new_value_ref(Value::Function(function)));
+                Ok(ControlFlow::Normal)
+            }
+            // 返回语句：提前结束函数执行并携带返回值
+            Stmt::Return(expr) => {
+                let value = self.eval_expr(expr)?;
+                Ok(ControlFlow::Return(value))
+            }
             // 变量声明：求值初始化表达式并在当前作用域定义变量
             Stmt::Let { name, initializer } => {
                 let value = self.eval_expr(initializer)?;
                 self.env.borrow_mut().define(name.clone(), value);
-                Ok(())
+                Ok(ControlFlow::Normal)
             }
             // 变量赋值：求值右侧表达式并更新已有变量
             Stmt::Assign { name, value } => {
                 let val = self.eval_expr(value)?;
-                self.env.borrow_mut().assign(name, val)
+                self.env.borrow_mut().assign(name, val)?;
+                Ok(ControlFlow::Normal)
             }
             // 打印语句：求值表达式并输出结果
             Stmt::Print(expr) => {
                 let val = self.eval_expr(expr)?;
                 println!("{}", val.borrow());
-                Ok(())
+                Ok(ControlFlow::Normal)
             }
             // 条件语句：根据条件真值选择执行分支
             Stmt::If {
@@ -90,7 +119,7 @@ impl Interpreter {
                 } else if let Some(else_stmts) = else_branch {
                     self.exec_block(else_stmts)
                 } else {
-                    Ok(())
+                    Ok(ControlFlow::Normal)
                 }
             }
             // 循环语句：当条件为真时重复执行循环体
@@ -100,39 +129,24 @@ impl Interpreter {
                     if !is_truthy(&cond.borrow()) {
                         break;
                     }
-                    self.exec_block(body)?;
+                    if let ControlFlow::Return(val) = self.exec_block(body)? {
+                        return Ok(ControlFlow::Return(val));
+                    }
                 }
-                Ok(())
+                Ok(ControlFlow::Normal)
             }
             // 代码块：创建新的作用域，执行完毕后恢复原环境
             Stmt::Block(stmts) => {
-                // 保存当前环境
                 let old_env = self.env.clone();
-                // 创建新环境，父环境指向旧环境
                 self.env = Rc::new(RefCell::new(Environment::new_with_parent(old_env.clone())));
-                // 执行块内语句
                 let result = self.exec_block(stmts);
-                // 恢复原环境（退出作用域）
                 self.env = old_env;
                 result
             }
-            // 表达式语句：通常用于赋值表达式
+            // 表达式语句：求值表达式并丢弃结果
             Stmt::Expression(expr) => {
-                // 处理赋值表达式，如 a = 5;
-                if let Expr::Binary {
-                    left,
-                    operator: _,
-                    right,
-                } = expr
-                {
-                    if let Expr::Variable(name) = left.as_ref() {
-                        let value = self.eval_expr(right)?;
-                        return self.env.borrow_mut().assign(name, value);
-                    }
-                }
-                // 其他表达式求值并丢弃结果
                 self.eval_expr(expr)?;
-                Ok(())
+                Ok(ControlFlow::Normal)
             }
         }
     }
@@ -147,11 +161,14 @@ impl Interpreter {
     /// # 返回
     /// - `Ok(())`: 全部执行成功
     /// - `Err(String)`: 执行错误
-    fn exec_block(&mut self, stmts: &[Stmt]) -> Result<(), String> {
+    fn exec_block(&mut self, stmts: &[Stmt]) -> Result<ControlFlow, String> {
         for stmt in stmts {
-            self.exec_stmt(stmt)?;
+            let flow = self.exec_stmt(stmt)?;
+            if let ControlFlow::Return(_) = flow {
+                return Ok(flow);
+            }
         }
-        Ok(())
+        Ok(ControlFlow::Normal)
     }
 
     /// 求值表达式
@@ -164,7 +181,7 @@ impl Interpreter {
     /// # 返回
     /// - `Ok(ValueRef)`: 计算结果的值引用
     /// - `Err(String)`: 求值错误（如类型不匹配、未定义变量）
-    fn eval_expr(&self, expr: &Expr) -> Result<ValueRef, String> {
+    fn eval_expr(&mut self, expr: &Expr) -> Result<ValueRef, String> {
         match expr {
             // 字面量：直接包装为 ValueRef
             Expr::Literal(val) => Ok(new_value_ref(val.clone())),
@@ -190,13 +207,19 @@ impl Interpreter {
                 };
                 Ok(new_value_ref(result))
             }
+            // 赋值表达式：先求值右侧，再更新变量值，返回赋值结果
+            Expr::Assign { name, value } => {
+                let val = self.eval_expr(value)?;
+                self.env.borrow_mut().assign(name, val.clone())?;
+                Ok(val)
+            }
+            Expr::Call { callee, arguments } => self.call_function(callee, arguments),
             // 二元运算：先求值左右操作数，再应用运算符
             Expr::Binary {
                 left,
                 operator,
                 right,
             } => {
-                // 注意：赋值已经在 Expression 语句中处理，这里处理其他二元运算
                 let l = self.eval_expr(left)?;
                 let r = self.eval_expr(right)?;
                 let l_val = l.borrow();
@@ -251,6 +274,45 @@ impl Interpreter {
         }
     }
 
+    fn call_function(&mut self, callee: &Expr, arguments: &[Expr]) -> Result<ValueRef, String> {
+        let callee_value = self.eval_expr(callee)?;
+        let mut args = Vec::new();
+        for arg in arguments {
+            args.push(self.eval_expr(arg)?);
+        }
+        match &*callee_value.borrow() {
+            Value::Function(function) => {
+                if args.len() != function.params.len() {
+                    return Err(format!(
+                        "Expected {} arguments but got {}",
+                        function.params.len(),
+                        args.len()
+                    ));
+                }
+
+                let old_env = self.env.clone();
+                self.env = Rc::new(RefCell::new(Environment::new_with_parent(
+                    function.closure.clone(),
+                )));
+
+                for (param, arg_value) in function.params.iter().zip(args.into_iter()) {
+                    self.env
+                        .borrow_mut()
+                        .define(param.clone(), arg_value.clone());
+                }
+
+                let result = self.exec_block(&function.body);
+                self.env = old_env;
+
+                match result? {
+                    ControlFlow::Return(val) => Ok(val),
+                    ControlFlow::Normal => Ok(new_value_ref(Value::Nil)),
+                }
+            }
+            _ => Err("Can only call functions".to_string()),
+        }
+    }
+
     /// 执行算术二元运算
     ///
     /// 确保两个操作数都是数值类型，然后应用给定的运算函数
@@ -297,3 +359,5 @@ impl Interpreter {
         }
     }
 }
+
+// Tests moved to `tests/` directory as integration tests.

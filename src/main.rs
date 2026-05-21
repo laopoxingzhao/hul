@@ -11,14 +11,6 @@
 /// - 文件模式：`cargo run -- script.hul`
 /// - REPL 模式：`cargo run`（交互式命令行）
 use std::env;
-mod ast;
-mod interpreter;
-mod lexer;
-mod parser;
-mod value;
-
-use crate::interpreter::Interpreter;
-use crate::parser::Parser;
 use std::fs;
 use std::io::{self, Write};
 
@@ -35,15 +27,7 @@ use std::io::{self, Write};
 /// # 返回
 /// - `Ok(())`: 执行成功
 /// - `Err(String)`: 编译或运行时错误信息
-fn run(source: &str) -> Result<(), String> {
-    // 步骤1：创建解析器（内部完成词法分析）
-    let mut parser = Parser::new(source);
-    // 步骤2：解析程序得到 AST
-    let stmts = parser.parse_program()?;
-    // 步骤3：创建解释器并执行
-    let mut interp = Interpreter::new();
-    interp.interpret(&stmts)
-}
+// Directly call library `run` where needed.
 
 /// 主函数 - 程序入口点
 ///
@@ -54,27 +38,42 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() == 2 {
         // ==================== 文件执行模式 ====================
-        // 读取文件内容并执行
-        let content = fs::read_to_string(&args[1]).expect("Unable to read file");
-        if let Err(e) = run(&content) {
-            eprintln!("Error: {}", e);
+            match fs::read_to_string(&args[1]) {
+            Ok(content) => {
+                if let Err(e) = hul::run(&content) {
+                    eprintln!("Runtime error: {}", e);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to read file '{}': {}", args[1], e);
+            }
         }
-    } else {
+    } else if args.len() == 1 {
         // ==================== REPL 交互模式 ====================
-        // 循环读取用户输入并立即执行
         loop {
             print!("hu> ");
-            io::stdout().flush().unwrap();
-            let mut line = String::new();
-            io::stdin()
-                .read_line(&mut line)
-                .expect("Failed to read line");
-            if line.trim().is_empty() {
+            if let Err(e) = io::stdout().flush() {
+                eprintln!("Failed to flush stdout: {}", e);
                 continue;
             }
-            if let Err(e) = run(&line) {
-                eprintln!("Error: {}", e);
+            let mut line = String::new();
+            match io::stdin().read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    if let Err(e) = hul::run(&line) {
+                        eprintln!("Runtime error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to read line: {}", e);
+                    continue;
+                }
             }
         }
+    } else {
+        eprintln!("Usage: {} [script]", args[0]);
     }
 }

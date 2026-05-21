@@ -5,6 +5,7 @@
 /// - ValueRef 类型：可变的引用计数值
 /// - Environment 结构体：管理变量绑定和作用域
 use std::{cell::RefCell, collections::HashMap, fmt::Display, rc::Rc};
+use crate::ast::Stmt;
 
 /// 值枚举 - 表示解释器中所有可能的值类型
 ///
@@ -21,8 +22,23 @@ pub enum Value {
     String(String),
     /// 布尔类型 - 存储 true 或 false
     Boolean(bool),
+    /// 函数类型 - 存储函数对象
+    Function(Function),
     /// 空值 - 表示无值或 null
     Nil,
+}
+
+/// 函数对象
+#[derive(Debug, Clone, PartialEq)]
+pub struct Function {
+    /// 函数名
+    pub name: String,
+    /// 参数列表
+    pub params: Vec<String>,
+    /// 函数体语句
+    pub body: Vec<Stmt>,
+    /// 定义时闭包环境
+    pub closure: Rc<RefCell<Environment>>,
 }
 
 /// 为 Value 实现 Display trait，使其可以转换为字符串显示
@@ -35,6 +51,7 @@ impl Display for Value {
             Value::String(s) => write!(f, "{}", s),
             // 布尔值转换为 "true" 或 "false"
             Value::Boolean(b) => write!(f, "{}", b),
+            Value::Function(func) => write!(f, "<fn {}>", func.name),
             // 空值显示为 "nil"
             Value::Nil => write!(f, "nil"),
         }
@@ -57,7 +74,9 @@ pub type ValueRef = Rc<RefCell<Value>>;
 /// 返回一个新的 ValueRef，可用于在解释器中共享和修改值
 ///
 /// # 示例
-/// ```
+/// ```rust
+/// use hul::value::new_value_ref;
+/// use hul::Value;
 /// let value_ref = new_value_ref(Value::Number(42.0));
 /// ```
 pub fn new_value_ref(value: Value) -> ValueRef {
@@ -98,7 +117,7 @@ pub fn is_truthy(value: &Value) -> bool {
 /// # 字段
 /// - `bindings`: 存储当前作用域中的变量绑定 (变量名 -> 值引用)
 /// - `parent`: 指向父作用域的引用，用于实现作用域链查找
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
     /// 当前作用域的变量绑定表
     bindings: HashMap<String, ValueRef>,

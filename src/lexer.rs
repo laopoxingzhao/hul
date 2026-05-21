@@ -32,6 +32,10 @@ pub enum TokenType {
     While,
     /// 关键字 `print`，用于输出
     Print,
+    /// 关键字 `fn`，用于函数声明
+    Fn,
+    /// 关键字 `return`，用于函数返回
+    Return,
     /// 关键字 `and`，逻辑与运算
     And,
     /// 关键字 `or`，逻辑或运算
@@ -66,6 +70,8 @@ pub enum TokenType {
     Assign,
     /// 语句结束符 `;`
     Semicolon,
+    /// 逗号 `,`
+    Comma,
     /// 左圆括号 `(`
     LParen,
     /// 右圆括号 `)`
@@ -165,20 +171,15 @@ impl Lexer {
         self.chars.get(self.pos).copied()
     }
 
-    /// 创建指定类型的 Token（使用当前位置的行号和列号）
-    ///
-    /// # 参数
-    /// - `ty`: Token 类型
-    ///
-    /// # 返回
-    /// 带有当前位置信息的 Token
+    /// 获取当前读取位置（当前行号、列号）
+    fn current_pos(&self) -> (usize, usize) {
+        (self.line, self.col)
+    }
 
+    /// 创建指定类型的 Token，使用当前位置作为位置信息
     fn make_token(&self, ty: TokenType) -> Token {
-        Token {
-            ty,
-            line: self.line,
-            col: self.col,
-        }
+        let (line, col) = self.current_pos();
+        Token { ty, line, col }
     }
 
     /// 跳过空白字符（空格、制表符、换行等）
@@ -218,7 +219,7 @@ impl Lexer {
     /// # 返回
     /// Number 类型的 Token
 
-    fn read_number(&mut self, first: char) -> Token {
+    fn read_number(&mut self, first: char) -> Result<Token, String> {
         let mut num_str = String::from(first);
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() || ch == '.' {
@@ -228,8 +229,10 @@ impl Lexer {
                 break;
             }
         }
-        let value = num_str.parse::<f64>().unwrap_or(0.0);
-        self.make_token(TokenType::Number(value))
+        let value = num_str.parse::<f64>().map_err(|_| {
+            format!("Invalid number literal '{}' at {}:{}", num_str, self.line, self.col)
+        })?;
+        Ok(self.make_token(TokenType::Number(value)))
     }
 
     /// 读取标识符或关键字
@@ -256,6 +259,8 @@ impl Lexer {
         }
         let ty = match ident.as_str() {
             "let" => TokenType::Let,
+            "fn" => TokenType::Fn,
+            "return" => TokenType::Return,
             "if" => TokenType::If,
             "else" => TokenType::Else,
             "while" => TokenType::While,
@@ -279,81 +284,53 @@ impl Lexer {
     /// # 返回
     /// String 类型的 Token
 
-    fn read_string(&mut self) -> Token {
+    fn read_string(&mut self, start_line: usize, start_col: usize) -> Result<Token, String> {
         let mut s = String::new();
         while let Some(ch) = self.peek() {
             self.advance();
             if ch == '"' {
-                break;
+                return Ok(self.make_token(TokenType::String(s)));
             }
             s.push(ch);
         }
-        self.make_token(TokenType::String(s))
+        Err(format!("Unterminated string literal at {}:{}", start_line, start_col))
     }
-}
 
-/// 为 Lexer 实现 Iterator trait，使其可以迭代产生 Token 流
-///
-/// 迭代流程：
-/// 1. 跳过空白字符
-/// 2. 检测并跳过单行注释 `//` 和 多行注释 `/* ... */`
-/// 3. 根据首字符识别 Token 类型
-/// 4. 返回 Token 或 None（到达 EOF）
+    fn skip_block_comment(&mut self, start_line: usize, start_col: usize) -> Result<(), String> {
+        while let Some(ch) = self.peek() {
+            self.advance();
+            if ch == '*' && self.peek() == Some('/') {
+                self.advance();
+                return Ok(());
+            }
+        }
+        Err(format!("Unterminated block comment starting at {}:{}", start_line, start_col))
+    }
 
-impl Iterator for Lexer {
-    /// 迭代产生的元素类型
-    type Item = Token;
-
-    /// 获取下一个 Token
-    ///
-    /// # 返回
-    /// - `Some(Token)`: 下一个 Token
-    /// - `None`: 已到达源代码末尾
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // 步骤1：跳过空白字符
+    fn next_token(&mut self) -> Result<Option<Token>, String> {
         self.skip_whitespace();
 
-        // 获取当前字符，若无字符则返回 EOF token（仅一次）
+        let (start_line, start_col) = self.current_pos();
+
         let ch = match self.peek() {
-            Some(ch) => {
-                ch
-            },
-            None => {
-                return None;
-            }
+            Some(ch) => ch,
+            None => return Ok(None),
         };
 
-        // 步骤2：检测并跳过单行注释
         if ch == '/' {
             self.advance();
             if self.peek() == Some('/') {
-                // 跳过注释内容，然后递归获取下一个 Token
                 self.skip_line_comment();
-                return self.next();
+                return self.next_token();
             } else if self.peek() == Some('*') {
-                // 多行注释 /* ... */
-                // TODO: 实现多行注释支持
-                
                 self.advance();
-                while let Some(ch) = self.peek() {
-                    self.advance();
-                    if ch == '*' && self.peek() == Some('/') {
-                        self.advance();
-                        break;
-                    }
-                }
-                return self.next();
-
-            } 
-            // 除号运算符：直接返回 Slash token
-            return Some(self.make_token(TokenType::Slash));
-            
+                self.skip_block_comment(start_line, start_col)?;
+                return self.next_token();
+            }
+            return Ok(Some(self.make_token(TokenType::Slash)));
         }
 
-        // 步骤3：根据首字符识别 Token 类型
         let token = match ch {
-            // 算术运算符
             '+' => {
                 self.advance();
                 self.make_token(TokenType::Plus)
@@ -366,16 +343,10 @@ impl Iterator for Lexer {
                 self.advance();
                 self.make_token(TokenType::Star)
             }
-            '/' => {
-                self.advance();
-                self.make_token(TokenType::Slash)
-            }
             '%' => {
                 self.advance();
                 self.make_token(TokenType::Percent)
             }
-
-            // 分隔符
             '(' => {
                 self.advance();
                 self.make_token(TokenType::LParen)
@@ -396,65 +367,72 @@ impl Iterator for Lexer {
                 self.advance();
                 self.make_token(TokenType::Semicolon)
             }
-
-            // 赋值与比较运算符
             '=' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    self.make_token(TokenType::EqualEqual) // ==
+                    self.make_token(TokenType::EqualEqual)
                 } else {
-                    self.make_token(TokenType::Assign) // =
+                    self.make_token(TokenType::Assign)
                 }
             }
             '!' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    self.make_token(TokenType::BangEqual) // !=
+                    self.make_token(TokenType::BangEqual)
                 } else {
-                    panic!("Expected '=' after '!' at line {}", self.line);
+                    return Err(format!("Unexpected character '!' at {}:{}", start_line, start_col));
                 }
             }
             '<' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    self.make_token(TokenType::LessEqual) // <=
+                    self.make_token(TokenType::LessEqual)
                 } else {
-                    self.make_token(TokenType::Less) // <
+                    self.make_token(TokenType::Less)
                 }
             }
             '>' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    self.make_token(TokenType::GreaterEqual) // >=
+                    self.make_token(TokenType::GreaterEqual)
                 } else {
-                    self.make_token(TokenType::Greater) // >
+                    self.make_token(TokenType::Greater)
                 }
             }
-
-            // 字面量
+            ',' => {
+                self.advance();
+                self.make_token(TokenType::Comma)
+            }
             '"' => {
                 self.advance();
-                self.read_string()
-            } // 字符串
+                self.read_string(start_line, start_col)?
+            }
             c if c.is_ascii_digit() => {
                 self.advance();
-                self.read_number(c) // 数字
+                self.read_number(c)?
             }
             c if c.is_alphabetic() || c == '_' => {
                 self.advance();
-                self.read_identifier(c) // 标识符/关键字
+                self.read_identifier(c)
             }
-
-            // 未知字符
-            _ => panic!("Unexpected character: '{}' at line {}", ch, self.line),
+            _ => {
+                return Err(format!("Unexpected character '{}' at {}:{}", ch, start_line, start_col));
+            }
         };
 
-        // 步骤4：返回 Token
-        Some(token)
+        Ok(Some(token))
+    }
+
+    pub fn collect_tokens(&mut self) -> Result<Vec<Token>, String> {
+        let mut tokens = Vec::new();
+        while let Some(token) = self.next_token()? {
+            tokens.push(token);
+        }
+        Ok(tokens)
     }
 }
 
@@ -464,7 +442,7 @@ mod tests {
 
     /// 辅助函数：将 Lexer 转换为 Token 向量
     fn tokenize(source: &str) -> Vec<Token> {
-        Lexer::new(source).collect()
+        Lexer::new(source).collect_tokens().unwrap()
     }
 
     // ==================== 1. 数字字面量测试 ====================
