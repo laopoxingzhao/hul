@@ -42,6 +42,17 @@ pub enum Stmt {
     /// - `condition`: 循环条件表达式
     /// - `body`: 循环体语句块
     While { condition: Expr, body: Vec<Stmt> },
+    /// for 循环语句
+    /// - `initializer`: 初始化语句（可选）
+    /// - `condition`: 循环条件（可选，默认 true）
+    /// - `update`: 更新表达式（可选）
+    /// - `body`: 循环体语句块
+    For {
+        initializer: Option<Box<Stmt>>,
+        condition: Option<Expr>,
+        update: Option<Expr>,
+        body: Vec<Stmt>,
+    },
     /// 代码块语句
     /// - 包含一系列语句，形成新的作用域
     Block(Vec<Stmt>),
@@ -51,6 +62,10 @@ pub enum Stmt {
     /// 返回语句
     /// - 在函数体内结束执行并返回一个值
     Return(Expr),
+    /// break 语句 - 跳出当前循环
+    Break,
+    /// continue 语句 - 跳过本次循环，进入下一次迭代
+    Continue,
     /// 函数声明
     /// - `name`: 函数名
     /// - `params`: 参数列表

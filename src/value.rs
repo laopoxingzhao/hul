@@ -88,7 +88,9 @@ pub fn new_value_ref(value: Value) -> ValueRef {
 /// 在条件判断中使用的真值判断逻辑：
 /// - Nil 返回 false
 /// - Boolean(false) 返回 false
-/// - 其他所有值（包括 0 和空字符串）返回 true
+/// - Number(0) 返回 false
+/// - 空字符串返回 false
+/// - 其他值返回 true
 ///
 /// # 参数
 /// - `value`: 要判断的 Value 引用
@@ -97,11 +99,10 @@ pub fn new_value_ref(value: Value) -> ValueRef {
 /// 返回 true 表示"真"，false 表示"假"
 pub fn is_truthy(value: &Value) -> bool {
     match value {
-        // nil 在条件判断中视为假
         Value::Nil => false,
-        // 布尔值直接使用其真值
         Value::Boolean(b) => *b,
-        // 其他所有值（数字、字符串）都视为真
+        Value::Number(n) => *n != 0.0,
+        Value::String(s) => !s.is_empty(),
         _ => true,
     }
 }
@@ -214,5 +215,11 @@ impl Environment {
             // 到达最外层作用域仍未找到
             Err(format!("Undefined variable '{}'", name))
         }
+    }
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Self::new()
     }
 }

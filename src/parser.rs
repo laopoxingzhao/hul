@@ -104,10 +104,49 @@ impl Parser {
     /// 包含所有语句的向量
     pub fn parse_program(&mut self) -> Result<Vec<Stmt>, String> {
         let mut stmts = Vec::new();
+        let mut errors = Vec::new();
         while !self.check(TokenType::Eof) {
-            stmts.push(self.statement()?);
+            match self.statement() {
+                Ok(stmt) => stmts.push(stmt),
+                Err(e) => {
+                    errors.push(e);
+                    self.synchronize();
+                }
+            }
         }
-        Ok(stmts)
+        if errors.is_empty() {
+            Ok(stmts)
+        } else {
+            Err(errors.join("\n"))
+        }
+    }
+
+    /// 错误恢复：跳过 token 直到下一个语句边界
+    ///
+    /// 在遇到解析错误后调用，跳过当前无法解析的 token 序列，
+    /// 直到遇到分号（语句结束）或关键字（新语句开始），
+    /// 使得解析器可以继续尝试解析后续语句。
+    fn synchronize(&mut self) {
+        while !self.check(TokenType::Eof) {
+            match self.peek() {
+                TokenType::Semicolon => {
+                    self.advance();
+                    return;
+                }
+                TokenType::Let
+                | TokenType::Fn
+                | TokenType::Return
+                | TokenType::If
+                | TokenType::While
+                | TokenType::For
+                | TokenType::Break
+                | TokenType::Continue
+                | TokenType::Print => return,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
     }
 
     /// 解析单个语句
@@ -123,7 +162,10 @@ impl Parser {
             TokenType::Return => self.return_statement(),
             TokenType::If => self.if_statement(),
             TokenType::While => self.while_statement(),
+            TokenType::For => self.for_statement(),
             TokenType::Print => self.print_statement(),
+            TokenType::Break => self.break_statement(),
+            TokenType::Continue => self.continue_statement(),
             TokenType::LBrace => self.block_statement(),
             _ => self.expression_statement(),
         }
@@ -224,6 +266,59 @@ impl Parser {
         self.expect(TokenType::RParen, "Expected ')'")?;
         let body = self.block()?;
         Ok(Stmt::While { condition, body })
+    }
+
+    /// 解析 for 循环语句 `for (init; cond; update) { ... }`
+    ///
+    /// # 返回
+    /// For 语句节点
+    fn for_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(TokenType::For, "Expected 'for'")?;
+        self.expect(TokenType::LParen, "Expected '('")?;
+
+        // 初始化：let 声明或表达式语句，可选
+        let initializer = if self.check(TokenType::Semicolon) {
+            self.advance();
+            None
+        } else if self.check(TokenType::Let) {
+            let stmt = self.let_statement()?;
+            Some(Box::new(stmt))
+        } else {
+            let expr = self.expression()?;
+            self.expect(TokenType::Semicolon, "Expected ';' after for clause")?;
+            if let Expr::Assign { name, value } = expr {
+                Some(Box::new(Stmt::Assign { name, value: *value }))
+            } else {
+                Some(Box::new(Stmt::Expression(expr)))
+            }
+        };
+
+        // 条件：表达式，可选
+        let condition = if self.check(TokenType::Semicolon) {
+            self.advance();
+            None
+        } else {
+            let expr = self.expression()?;
+            self.expect(TokenType::Semicolon, "Expected ';' after for condition")?;
+            Some(expr)
+        };
+
+        // 更新：表达式，可选
+        let update = if self.check(TokenType::RParen) {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+        self.expect(TokenType::RParen, "Expected ')' after for clauses")?;
+
+        let body = self.block()?;
+
+        Ok(Stmt::For {
+            initializer,
+            condition,
+            update,
+            body,
+        })
     }
 
     /// 解析代码块（可以是显式的 `{...}` 或单条语句）
@@ -560,6 +655,18 @@ impl Parser {
         let value = self.expression()?;
         self.expect(TokenType::Semicolon, "Expected ';' after return")?;
         Ok(Stmt::Return(value))
+    }
+
+    fn break_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(TokenType::Break, "Expected 'break'")?;
+        self.expect(TokenType::Semicolon, "Expected ';' after break")?;
+        Ok(Stmt::Break)
+    }
+
+    fn continue_statement(&mut self) -> Result<Stmt, String> {
+        self.expect(TokenType::Continue, "Expected 'continue'")?;
+        self.expect(TokenType::Semicolon, "Expected ';' after continue")?;
+        Ok(Stmt::Continue)
     }
 
     /// 期望当前 Token 为标识符

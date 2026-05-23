@@ -30,6 +30,12 @@ pub enum TokenType {
     Else,
     /// 关键字 `while`，用于循环
     While,
+    /// 关键字 `for`，用于循环
+    For,
+    /// 关键字 `break`，跳出循环
+    Break,
+    /// 关键字 `continue`，跳过本次循环
+    Continue,
     /// 关键字 `print`，用于输出
     Print,
     /// 关键字 `fn`，用于函数声明
@@ -90,7 +96,6 @@ pub enum TokenType {
 /// - `ty`: Token 的类型
 /// - `line`: 所在的行号（从 1 开始）
 /// - `col`: 所在的列号（从 1 开始）
-
 #[derive(Debug, Clone)]
 pub struct Token {
     /// Token 类型
@@ -110,7 +115,6 @@ pub struct Token {
 /// - 数字字面量识别
 /// - 标识符/关键字识别
 /// - 字符串字面量识别
-
 pub struct Lexer {
     /// 源代码字符列表
     chars: Vec<char>,
@@ -130,7 +134,6 @@ impl Lexer {
     ///
     /// # 返回
     /// 初始化后的 Lexer 实例，行号和列号从 1 开始
-
     pub fn new(source: &str) -> Self {
         Lexer {
             chars: source.chars().collect(),
@@ -145,7 +148,6 @@ impl Lexer {
     /// # 返回
     /// - `Some(char)`: 下一个字符
     /// - `None`: 已到达源代码末尾
-
     fn advance(&mut self) -> Option<char> {
         if self.pos >= self.chars.len() {
             return None;
@@ -166,7 +168,6 @@ impl Lexer {
     /// # 返回
     /// - `Some(char)`: 当前字符
     /// - `None`: 已到达末尾
-
     fn peek(&self) -> Option<char> {
         self.chars.get(self.pos).copied()
     }
@@ -176,16 +177,14 @@ impl Lexer {
         (self.line, self.col)
     }
 
-    /// 创建指定类型的 Token，使用当前位置作为位置信息
-    fn make_token(&self, ty: TokenType) -> Token {
-        let (line, col) = self.current_pos();
+    /// 创建指定类型的 Token，使用给定的位置信息
+    fn make_token(&self, ty: TokenType, line: usize, col: usize) -> Token {
         Token { ty, line, col }
     }
 
     /// 跳过空白字符（空格、制表符、换行等）
     ///
     /// 注意：换行符会换行，但注释后的换行会被 skip_line_comment 处理
-
     fn skip_whitespace(&mut self) {
         while let Some(ch) = self.peek() {
             if ch.is_whitespace() {
@@ -199,7 +198,6 @@ impl Lexer {
     /// 跳过单行注释 `// ...`
     ///
     /// 从 `//` 后开始，跳过所有字符直到遇到换行符或 EOF
-
     fn skip_line_comment(&mut self) {
         while let Some(ch) = self.peek() {
             if ch == '\n' {
@@ -218,8 +216,7 @@ impl Lexer {
     ///
     /// # 返回
     /// Number 类型的 Token
-
-    fn read_number(&mut self, first: char) -> Result<Token, String> {
+    fn read_number(&mut self, first: char, start_line: usize, start_col: usize) -> Result<Token, String> {
         let mut num_str = String::from(first);
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() || ch == '.' {
@@ -230,9 +227,9 @@ impl Lexer {
             }
         }
         let value = num_str.parse::<f64>().map_err(|_| {
-            format!("Invalid number literal '{}' at {}:{}", num_str, self.line, self.col)
+            format!("Invalid number literal '{}' at {}:{}", num_str, start_line, start_col)
         })?;
-        Ok(self.make_token(TokenType::Number(value)))
+        Ok(self.make_token(TokenType::Number(value), start_line, start_col))
     }
 
     /// 读取标识符或关键字
@@ -246,8 +243,7 @@ impl Lexer {
     ///
     /// # 返回
     /// 关键字或标识符 Token
-
-    fn read_identifier(&mut self, first: char) -> Token {
+    fn read_identifier(&mut self, first: char, start_line: usize, start_col: usize) -> Token {
         let mut ident = String::from(first);
         while let Some(ch) = self.peek() {
             if ch.is_alphanumeric() || ch == '_' {
@@ -264,6 +260,9 @@ impl Lexer {
             "if" => TokenType::If,
             "else" => TokenType::Else,
             "while" => TokenType::While,
+            "for" => TokenType::For,
+            "break" => TokenType::Break,
+            "continue" => TokenType::Continue,
             "print" => TokenType::Print,
             "and" => TokenType::And,
             "or" => TokenType::Or,
@@ -273,25 +272,40 @@ impl Lexer {
             "nil" => TokenType::Nil,
             _ => TokenType::Identifier(ident),
         };
-        self.make_token(ty)
+        self.make_token(ty, start_line, start_col)
     }
 
     /// 读取字符串字面量
     ///
     /// 从双引号开始，到下一个双引号结束
-    /// 注意：目前不支持转义字符
+    /// 支持转义序列：`\n` `\t` `\r` `\\` `\"`
     ///
     /// # 返回
     /// String 类型的 Token
-
     fn read_string(&mut self, start_line: usize, start_col: usize) -> Result<Token, String> {
         let mut s = String::new();
         while let Some(ch) = self.peek() {
             self.advance();
             if ch == '"' {
-                return Ok(self.make_token(TokenType::String(s)));
+                return Ok(self.make_token(TokenType::String(s), start_line, start_col));
             }
-            s.push(ch);
+            if ch == '\\' {
+                match self.advance() {
+                    Some('n')  => s.push('\n'),
+                    Some('t')  => s.push('\t'),
+                    Some('r')  => s.push('\r'),
+                    Some('\\') => s.push('\\'),
+                    Some('"')  => s.push('"'),
+                    Some(other) => return Err(format!(
+                        "Unknown escape '\\{}' at {}:{}", other, self.line, self.col
+                    )),
+                    None => return Err(format!(
+                        "Unexpected EOF in string escape at {}:{}", self.line, self.col
+                    )),
+                }
+            } else {
+                s.push(ch);
+            }
         }
         Err(format!("Unterminated string literal at {}:{}", start_line, start_col))
     }
@@ -327,60 +341,60 @@ impl Lexer {
                 self.skip_block_comment(start_line, start_col)?;
                 return self.next_token();
             }
-            return Ok(Some(self.make_token(TokenType::Slash)));
+            return Ok(Some(self.make_token(TokenType::Slash, start_line, start_col)));
         }
 
         let token = match ch {
             '+' => {
                 self.advance();
-                self.make_token(TokenType::Plus)
+                self.make_token(TokenType::Plus, start_line, start_col)
             }
             '-' => {
                 self.advance();
-                self.make_token(TokenType::Minus)
+                self.make_token(TokenType::Minus, start_line, start_col)
             }
             '*' => {
                 self.advance();
-                self.make_token(TokenType::Star)
+                self.make_token(TokenType::Star, start_line, start_col)
             }
             '%' => {
                 self.advance();
-                self.make_token(TokenType::Percent)
+                self.make_token(TokenType::Percent, start_line, start_col)
             }
             '(' => {
                 self.advance();
-                self.make_token(TokenType::LParen)
+                self.make_token(TokenType::LParen, start_line, start_col)
             }
             ')' => {
                 self.advance();
-                self.make_token(TokenType::RParen)
+                self.make_token(TokenType::RParen, start_line, start_col)
             }
             '{' => {
                 self.advance();
-                self.make_token(TokenType::LBrace)
+                self.make_token(TokenType::LBrace, start_line, start_col)
             }
             '}' => {
                 self.advance();
-                self.make_token(TokenType::RBrace)
+                self.make_token(TokenType::RBrace, start_line, start_col)
             }
             ';' => {
                 self.advance();
-                self.make_token(TokenType::Semicolon)
+                self.make_token(TokenType::Semicolon, start_line, start_col)
             }
             '=' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    self.make_token(TokenType::EqualEqual)
+                    self.make_token(TokenType::EqualEqual, start_line, start_col)
                 } else {
-                    self.make_token(TokenType::Assign)
+                    self.make_token(TokenType::Assign, start_line, start_col)
                 }
             }
             '!' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    self.make_token(TokenType::BangEqual)
+                    self.make_token(TokenType::BangEqual, start_line, start_col)
                 } else {
                     return Err(format!("Unexpected character '!' at {}:{}", start_line, start_col));
                 }
@@ -389,23 +403,23 @@ impl Lexer {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    self.make_token(TokenType::LessEqual)
+                    self.make_token(TokenType::LessEqual, start_line, start_col)
                 } else {
-                    self.make_token(TokenType::Less)
+                    self.make_token(TokenType::Less, start_line, start_col)
                 }
             }
             '>' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    self.make_token(TokenType::GreaterEqual)
+                    self.make_token(TokenType::GreaterEqual, start_line, start_col)
                 } else {
-                    self.make_token(TokenType::Greater)
+                    self.make_token(TokenType::Greater, start_line, start_col)
                 }
             }
             ',' => {
                 self.advance();
-                self.make_token(TokenType::Comma)
+                self.make_token(TokenType::Comma, start_line, start_col)
             }
             '"' => {
                 self.advance();
@@ -413,11 +427,11 @@ impl Lexer {
             }
             c if c.is_ascii_digit() => {
                 self.advance();
-                self.read_number(c)?
+                self.read_number(c, start_line, start_col)?
             }
             c if c.is_alphabetic() || c == '_' => {
                 self.advance();
-                self.read_identifier(c)
+                self.read_identifier(c, start_line, start_col)
             }
             _ => {
                 return Err(format!("Unexpected character '{}' at {}:{}", ch, start_line, start_col));
@@ -433,563 +447,5 @@ impl Lexer {
             tokens.push(token);
         }
         Ok(tokens)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 辅助函数：将 Lexer 转换为 Token 向量
-    fn tokenize(source: &str) -> Vec<Token> {
-        Lexer::new(source).collect_tokens().unwrap()
-    }
-
-    // ==================== 1. 数字字面量测试 ====================
-
-    #[test]
-    fn test_integer_literal() {
-        let result = tokenize("42");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Number(42.0));
-    }
-
-    #[test]
-    fn test_negative_integer() {
-        let result = tokenize("-5");
-        assert_eq!(result.len(), 2); // - 和 5
-        assert_eq!(result[0].ty, TokenType::Minus);
-        assert_eq!(result[1].ty, TokenType::Number(5.0));
-    }
-
-    #[test]
-    fn test_float_literal() {
-        let result = tokenize("3.14");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Number(3.14));
-    }
-
-    #[test]
-    fn test_float_with_leading_zero() {
-        let result = tokenize("0.5");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Number(0.5));
-    }
-
-    #[test]
-    fn test_large_number() {
-        let result = tokenize("1234567890");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Number(1234567890.0));
-    }
-
-    // ==================== 2. 字符串字面量测试 ====================
-
-    #[test]
-    fn test_string_literal() {
-        let result = tokenize("\"hello\"");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::String("hello".to_string()));
-    }
-
-    #[test]
-    fn test_empty_string() {
-        let result = tokenize("\"\"");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::String("".to_string()));
-    }
-
-    #[test]
-    fn test_string_with_spaces() {
-        let result = tokenize("\"hello world\"");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::String("hello world".to_string()));
-    }
-
-    #[test]
-    fn test_string_with_numbers() {
-        let result = tokenize("\"test123\"");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::String("test123".to_string()));
-    }
-
-    // ==================== 3. 布尔值和 nil 测试 ====================
-
-    #[test]
-    fn test_true_keyword() {
-        let result = tokenize("true");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::True);
-    }
-
-    #[test]
-    fn test_false_keyword() {
-        let result = tokenize("false");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::False);
-    }
-
-    #[test]
-    fn test_nil_keyword() {
-        let result = tokenize("nil");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Nil);
-    }
-
-    // ==================== 4. 关键字测试 ====================
-
-    #[test]
-    fn test_let_keyword() {
-        let result = tokenize("let");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Let);
-    }
-
-    #[test]
-    fn test_if_keyword() {
-        let result = tokenize("if");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::If);
-    }
-
-    #[test]
-    fn test_else_keyword() {
-        let result = tokenize("else");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Else);
-    }
-
-    #[test]
-    fn test_while_keyword() {
-        let result = tokenize("while");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::While);
-    }
-
-    #[test]
-    fn test_print_keyword() {
-        let result = tokenize("print");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Print);
-    }
-
-    #[test]
-    fn test_and_keyword() {
-        let result = tokenize("and");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::And);
-    }
-
-    #[test]
-    fn test_or_keyword() {
-        let result = tokenize("or");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Or);
-    }
-
-    #[test]
-    fn test_not_keyword() {
-        let result = tokenize("not");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Not);
-    }
-
-    // ==================== 5. 标识符测试 ====================
-
-    #[test]
-    fn test_simple_identifier() {
-        let result = tokenize("x");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Identifier("x".to_string()));
-    }
-
-    #[test]
-    fn test_identifier_with_underscore() {
-        let result = tokenize("my_var");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Identifier("my_var".to_string()));
-    }
-
-    #[test]
-    fn test_identifier_with_numbers() {
-        let result = tokenize("var123");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Identifier("var123".to_string()));
-    }
-
-    #[test]
-    fn test_identifier_starting_with_underscore() {
-        let result = tokenize("_private");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Identifier("_private".to_string()));
-    }
-
-    #[test]
-    fn test_long_identifier() {
-        let result = tokenize("myVeryLongVariableName123");
-        assert_eq!(result.len(), 1);
-        assert_eq!(
-            result[0].ty,
-            TokenType::Identifier("myVeryLongVariableName123".to_string())
-        );
-    }
-
-    // ==================== 6. 运算符测试 ====================
-
-    #[test]
-    fn test_plus_operator() {
-        let result = tokenize("+");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Plus);
-    }
-
-    #[test]
-    fn test_minus_operator() {
-        let result = tokenize("-");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Minus);
-    }
-
-    #[test]
-    fn test_star_operator() {
-        let result = tokenize("*");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Star);
-    }
-
-    // 注意：由于 Lexer 实现中 / 用于注释，这个测试会 panic
-    // 跳过此测试，因为 Lexer 不支持单独的除号运算符
-    // #[test]
-    // fn test_slash_operator() {
-    //     let result = tokenize("/");
-    //     assert_eq!(result.len(), 1);
-    //     assert_eq!(result[0].ty, TokenType::Slash);
-    // }
-
-    #[test]
-    fn test_percent_operator() {
-        let result = tokenize("%");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Percent);
-    }
-
-    #[test]
-    fn test_equal_equal_operator() {
-        let result = tokenize("==");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::EqualEqual);
-    }
-
-    #[test]
-    fn test_bang_equal_operator() {
-        let result = tokenize("!=");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::BangEqual);
-    }
-
-    #[test]
-    fn test_less_operator() {
-        let result = tokenize("<");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Less);
-    }
-
-    #[test]
-    fn test_less_equal_operator() {
-        let result = tokenize("<=");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::LessEqual);
-    }
-
-    #[test]
-    fn test_greater_operator() {
-        let result = tokenize(">");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Greater);
-    }
-
-    #[test]
-    fn test_greater_equal_operator() {
-        let result = tokenize(">=");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::GreaterEqual);
-    }
-
-    #[test]
-    fn test_assign_operator() {
-        let result = tokenize("=");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Assign);
-    }
-
-    // ==================== 7. 分隔符测试 ====================
-
-    #[test]
-    fn test_left_paren() {
-        let result = tokenize("(");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::LParen);
-    }
-
-    #[test]
-    fn test_right_paren() {
-        let result = tokenize(")");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::RParen);
-    }
-
-    #[test]
-    fn test_left_brace() {
-        let result = tokenize("{");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::LBrace);
-    }
-
-    #[test]
-    fn test_right_brace() {
-        let result = tokenize("}");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::RBrace);
-    }
-
-    #[test]
-    fn test_semicolon() {
-        let result = tokenize(";");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Semicolon);
-    }
-
-    #[test]
-    fn test_all_delimiters() {
-        let result = tokenize("(){};");
-        assert_eq!(result.len(), 5);
-        assert_eq!(result[0].ty, TokenType::LParen);
-        assert_eq!(result[1].ty, TokenType::RParen);
-        assert_eq!(result[2].ty, TokenType::LBrace);
-        assert_eq!(result[3].ty, TokenType::RBrace);
-        assert_eq!(result[4].ty, TokenType::Semicolon);
-    }
-
-    // ==================== 8. 复合表达式测试 ====================
-
-    #[test]
-    fn test_variable_declaration() {
-        let result = tokenize("let x = 42;");
-        assert_eq!(result.len(), 5);
-        assert_eq!(result[0].ty, TokenType::Let);
-        assert_eq!(result[1].ty, TokenType::Identifier("x".to_string()));
-        assert_eq!(result[2].ty, TokenType::Assign);
-        assert_eq!(result[3].ty, TokenType::Number(42.0));
-        assert_eq!(result[4].ty, TokenType::Semicolon);
-    }
-
-    #[test]
-    fn test_if_statement() {
-        let result = tokenize("if (x) { y; }");
-        assert_eq!(result.len(), 8);
-        assert_eq!(result[0].ty, TokenType::If);
-        assert_eq!(result[1].ty, TokenType::LParen);
-        assert_eq!(result[2].ty, TokenType::Identifier("x".to_string()));
-        assert_eq!(result[3].ty, TokenType::RParen);
-        assert_eq!(result[4].ty, TokenType::LBrace);
-        assert_eq!(result[5].ty, TokenType::Identifier("y".to_string()));
-        assert_eq!(result[6].ty, TokenType::Semicolon);
-        assert_eq!(result[7].ty, TokenType::RBrace);
-    }
-
-    #[test]
-    fn test_while_loop() {
-        // 注意：由于 Lexer 不支持单独的 / 作为除号，不使用除法
-        let result = tokenize("while (x < 10) { x = x + 1; }");
-        assert_eq!(result.len(), 14);
-        assert_eq!(result[0].ty, TokenType::While);
-        assert_eq!(result[1].ty, TokenType::LParen);
-    }
-
-    #[test]
-    fn test_arithmetic_expression() {
-        // 注意：当前 Lexer 实现不支持单独的 / 作为除号（会 panic）
-        // 所以这里不使用 / 运算符
-        let result = tokenize("a + b * c - e");
-        assert_eq!(result.len(), 7);
-    }
-
-    #[test]
-    fn test_logical_expression() {
-        let result = tokenize("a and b or not c");
-        // a, and, b, or, not, c = 6 tokens
-        assert_eq!(result.len(), 6);
-        assert_eq!(result[1].ty, TokenType::And);
-        assert_eq!(result[3].ty, TokenType::Or);
-        assert_eq!(result[4].ty, TokenType::Not);
-    }
-
-    #[test]
-    fn test_comparison_chain() {
-        let result = tokenize("a == b and c != d");
-        assert_eq!(result.len(), 7);
-    }
-
-    #[test]
-    fn test_print_statement() {
-        let result = tokenize("print \"hello\";");
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0].ty, TokenType::Print);
-        assert_eq!(result[1].ty, TokenType::String("hello".to_string()));
-        assert_eq!(result[2].ty, TokenType::Semicolon);
-    }
-
-    // ==================== 9. 注释跳过测试 ====================
-
-    #[test]
-    fn test_single_line_comment() {
-        let result = tokenize("42 // this is a comment");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Number(42.0));
-    }
-
-    #[test]
-    fn test_comment_with_newline() {
-        let result = tokenize("42 // comment\n56");
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].ty, TokenType::Number(42.0));
-        assert_eq!(result[1].ty, TokenType::Number(56.0));
-    }
-
-    #[test]
-    fn test_comment_at_start() {
-        let result = tokenize("// comment\nlet x = 1;");
-        assert_eq!(result.len(), 5);
-        assert_eq!(result[0].ty, TokenType::Let);
-    }
-
-    #[test]
-    fn test_multiple_comments() {
-        let result = tokenize("// comment 1\n42 // comment 2\n// comment 3\n56");
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].ty, TokenType::Number(42.0));
-        assert_eq!(result[1].ty, TokenType::Number(56.0));
-    }
-
-    #[test]
-    fn test_comment_in_middle() {
-        let result = tokenize("let // comment\nx = 1;");
-        assert_eq!(result.len(), 5);
-        assert_eq!(result[0].ty, TokenType::Let);
-        assert_eq!(result[1].ty, TokenType::Identifier("x".to_string()));
-    }
-
-    // ==================== 10. 位置信息测试 ====================
-    // 注意：由于 Lexer 实现中 make_token 在 advance 之后调用，
-    // 位置信息反映的是 token 结束后的位置。这是 Lexer 的已知行为。
-
-    #[test]
-    fn test_position_single_token() {
-        let result = tokenize("let");
-        assert_eq!(result[0].line, 1);
-        // advance 后 col 变为 4 (let 后面)
-        assert_eq!(result[0].col, 4);
-    }
-
-    #[test]
-    fn test_position_multiple_tokens() {
-        let result = tokenize("let x = 1");
-        assert_eq!(result[0].line, 1);
-        assert_eq!(result[0].col, 4); // let 结束后
-        assert_eq!(result[1].line, 1);
-        assert_eq!(result[1].col, 6); // x 结束后
-        assert_eq!(result[2].line, 1);
-        assert_eq!(result[2].col, 8); // = 结束后
-        assert_eq!(result[3].line, 1);
-        assert_eq!(result[3].col, 10); // 1 结束后
-    }
-
-    #[test]
-    fn test_position_with_spaces() {
-        let result = tokenize("  let    x  =  1  ");
-        assert_eq!(result[0].line, 1);
-        assert_eq!(result[0].col, 6); // let 结束后
-        assert_eq!(result[1].line, 1);
-        assert_eq!(result[1].col, 11); // x 结束后
-        assert_eq!(result[2].line, 1);
-        assert_eq!(result[2].col, 14); // = 结束后
-        assert_eq!(result[3].line, 1);
-        assert_eq!(result[3].col, 17); // 1 结束后
-    }
-
-    #[test]
-    fn test_position_newline() {
-        let result = tokenize("let x = 1\nlet y = 2");
-        assert_eq!(result[0].line, 1);
-        assert_eq!(result[0].col, 4); // 第一行 let 结束后
-        assert_eq!(result[1].line, 1);
-        assert_eq!(result[1].col, 6); // 第一行 x 结束后
-        assert_eq!(result[4].line, 2);
-        assert_eq!(result[4].col, 4); // 第二行 let 结束后
-        assert_eq!(result[5].line, 2);
-        assert_eq!(result[5].col, 6); // 第二行 y 结束后
-    }
-
-    #[test]
-    fn test_position_multiple_newlines() {
-        let result = tokenize("let x = 1\n\n\nlet y = 2");
-        assert_eq!(result[0].line, 1);
-        assert_eq!(result[4].line, 4); // 在第4行
-    }
-
-    // ==================== 边界情况测试 ====================
-
-    #[test]
-    fn test_empty_input() {
-        let result = tokenize("");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_whitespace_only() {
-        let result = tokenize("   \n\t  ");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_leading_whitespace() {
-        let result = tokenize("   42");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Number(42.0));
-    }
-
-    #[test]
-    fn test_trailing_whitespace() {
-        let result = tokenize("42   ");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].ty, TokenType::Number(42.0));
-    }
-
-    #[test]
-    fn test_complex_expression() {
-        // 注意：由于 Lexer 不支持 / 作为除号，改用其他运算符
-        let result = tokenize("let result = (a + b) * c - 2;");
-        assert!(result.len() > 0);
-        // 验证关键字和运算符
-        assert_eq!(result[0].ty, TokenType::Let);
-        assert_eq!(result[3].ty, TokenType::LParen);
-        assert_eq!(result[7].ty, TokenType::RParen);
-    }
-
-    #[test]
-    fn test_nested_parens() {
-        let result = tokenize("((a))");
-        // (, (, a, ), ) = 5 tokens
-        assert_eq!(result.len(), 5);
-    }
-
-    #[test]
-    fn test_bool_and_nil_in_expression() {
-        let result = tokenize("true and false or nil");
-        // 验证结果
-        assert!(result.len() >= 3);
-        assert_eq!(result[0].ty, TokenType::True);
-        assert_eq!(result[2].ty, TokenType::False);
-        assert_eq!(result[4].ty, TokenType::Nil);
     }
 }

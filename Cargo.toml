@@ -2,5 +2,7 @@
 name = "hul"
 version = "0.1.0"
 edition = "2024"
+description = "A lightweight scripting language interpreter implemented in Rust"
+license = "MIT"
 
 [dependencies]

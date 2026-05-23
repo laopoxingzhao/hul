@@ -12,6 +12,8 @@ use std::rc::Rc;
 
 enum ControlFlow {
     Normal,
+    Break,
+    Continue,
     Return(ValueRef),
 }
 
@@ -51,6 +53,12 @@ impl Interpreter {
         for stmt in stmts {
             match self.exec_stmt(stmt)? {
                 ControlFlow::Normal => (),
+                ControlFlow::Break => {
+                    return Err("'break' outside of loop".to_string())
+                }
+                ControlFlow::Continue => {
+                    return Err("'continue' outside of loop".to_string())
+                }
                 ControlFlow::Return(_) => {
                     return Err("Unexpected return outside function".to_string())
                 }
@@ -89,6 +97,10 @@ impl Interpreter {
                 let value = self.eval_expr(expr)?;
                 Ok(ControlFlow::Return(value))
             }
+            // break 语句：跳出当前循环
+            Stmt::Break => Ok(ControlFlow::Break),
+            // continue 语句：跳过本次循环迭代
+            Stmt::Continue => Ok(ControlFlow::Continue),
             // 变量声明：求值初始化表达式并在当前作用域定义变量
             Stmt::Let { name, initializer } => {
                 let value = self.eval_expr(initializer)?;
@@ -129,10 +141,60 @@ impl Interpreter {
                     if !is_truthy(&cond.borrow()) {
                         break;
                     }
-                    if let ControlFlow::Return(val) = self.exec_block(body)? {
-                        return Ok(ControlFlow::Return(val));
+                    match self.exec_block(body)? {
+                        ControlFlow::Normal => {}
+                        ControlFlow::Break => break,
+                        ControlFlow::Continue => continue,
+                        ControlFlow::Return(val) => return Ok(ControlFlow::Return(val)),
                     }
                 }
+                Ok(ControlFlow::Normal)
+            }
+            // for 循环：脱糖为 { init; while(cond) { body; update; } }
+            Stmt::For {
+                initializer,
+                condition,
+                update,
+                body,
+            } => {
+                let old_env = self.env.clone();
+                self.env = Rc::new(RefCell::new(Environment::new_with_parent(old_env.clone())));
+
+                // 执行初始化
+                if let Some(init) = initializer
+                    && let ControlFlow::Return(v) = self.exec_stmt(init)? {
+                        self.env = old_env;
+                        return Ok(ControlFlow::Return(v));
+                    }
+
+                // 循环：检查条件 → 执行 body → 执行 update
+                loop {
+                    if let Some(ref cond) = *condition {
+                        let val = self.eval_expr(cond)?;
+                        if !is_truthy(&val.borrow()) {
+                            break;
+                        }
+                    }
+                    match self.exec_block(body)? {
+                        ControlFlow::Normal => {}
+                        ControlFlow::Break => break,
+                        ControlFlow::Continue => {
+                            if let Some(ref upd) = *update {
+                                self.eval_expr(upd)?;
+                            }
+                            continue;
+                        }
+                        ControlFlow::Return(val) => {
+                            self.env = old_env;
+                            return Ok(ControlFlow::Return(val));
+                        }
+                    }
+                    if let Some(ref upd) = *update {
+                        self.eval_expr(upd)?;
+                    }
+                }
+
+                self.env = old_env;
                 Ok(ControlFlow::Normal)
             }
             // 代码块：创建新的作用域，执行完毕后恢复原环境
@@ -164,8 +226,9 @@ impl Interpreter {
     fn exec_block(&mut self, stmts: &[Stmt]) -> Result<ControlFlow, String> {
         for stmt in stmts {
             let flow = self.exec_stmt(stmt)?;
-            if let ControlFlow::Return(_) = flow {
-                return Ok(flow);
+            match flow {
+                ControlFlow::Normal => continue,
+                _ => return Ok(flow),
             }
         }
         Ok(ControlFlow::Normal)
@@ -226,7 +289,13 @@ impl Interpreter {
                 let r_val = r.borrow();
                 let result = match operator {
                     // 算术运算：加减乘除取模
-                    BinaryOp::Add => self.arith_binop(&l_val, &r_val, |a, b| a + b, "+")?,
+                    BinaryOp::Add => match (&*l_val, &*r_val) {
+                        (Value::Number(a), Value::Number(b)) => Value::Number(a + b),
+                        (Value::String(a), Value::String(b)) => Value::String(format!("{}{}", a, b)),
+                        (Value::String(a), Value::Number(b)) => Value::String(format!("{}{}", a, b)),
+                        (Value::Number(a), Value::String(b)) => Value::String(format!("{}{}", a, b)),
+                        _ => return Err("Operands for '+' must be numbers or strings".into()),
+                    },
                     BinaryOp::Sub => self.arith_binop(&l_val, &r_val, |a, b| a - b, "-")?,
                     BinaryOp::Mul => self.arith_binop(&l_val, &r_val, |a, b| a * b, "*")?,
                     BinaryOp::Div => self.arith_binop(&l_val, &r_val, |a, b| a / b, "/")?,
@@ -307,6 +376,8 @@ impl Interpreter {
                 match result? {
                     ControlFlow::Return(val) => Ok(val),
                     ControlFlow::Normal => Ok(new_value_ref(Value::Nil)),
+                    ControlFlow::Break => Err("'break' outside of loop".to_string()),
+                    ControlFlow::Continue => Err("'continue' outside of loop".to_string()),
                 }
             }
             _ => Err("Can only call functions".to_string()),
@@ -357,6 +428,12 @@ impl Interpreter {
             (Value::Number(x), Value::Number(y)) => Ok(Value::Boolean(op(*x, *y))),
             _ => Err(format!("Operands for '{}' must be numbers", name)),
         }
+    }
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

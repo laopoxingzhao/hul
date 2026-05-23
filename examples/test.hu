@@ -1,0 +1,214 @@
+// ========== 1. 注释 ==========
+
+// 这是单行注释
+print "=== 注释 ==="; /* 行内多行注释 */
+
+/* 多行注释：
+   可以跨越多行
+   用来写说明 */
+let x = 42; // 行尾注释
+print x;
+
+// ========== 2. 字面量 ==========
+
+print "";
+print "=== 字面量 ===";
+
+let num = 3.14;
+let str = "hello";
+let flag = true;
+let empty = nil;
+print num;
+print str;
+print flag;
+print empty;
+
+// ========== 3. 字符串转义 ==========
+
+print "";
+print "=== 字符串转义 ===";
+
+let escaped = "line1\nline2\ttab\\quote\"";
+print escaped;
+
+// ========== 4. 变量声明与赋值 ==========
+
+print "";
+print "=== 变量 ===";
+
+let a = 10;
+let b;
+b = 20;
+print a;
+print b;
+
+// 链式赋值
+let p = 0;
+let q = 0;
+p = q = 99;
+print p;
+print q;
+
+// ========== 5. 算术运算 ==========
+
+print "";
+print "=== 算术 ===";
+
+print 1 + 2 * 3;       // 7
+print (1 + 2) * 3;     // 9
+print 10 - 3;           // 7
+print 10 / 4;           // 2.5
+print 10 % 3;           // 1
+print -5;               // -5
+
+// ========== 6. 字符串拼接 ==========
+
+print "";
+print "=== 字符串拼接 ===";
+
+let hello = "hello" + " " + "world";
+print hello;
+let label = "age=" + 25;
+print label;
+let mix = 100 + "%";
+print mix;
+
+// ========== 7. 比较运算 ==========
+
+print "";
+print "=== 比较 ===";
+
+print 1 == 1;           // true
+print 1 != 2;           // true
+print 3 < 5;            // true
+print 3 <= 3;           // true
+print 5 > 3;            // true
+print 5 >= 5;           // true
+
+// ========== 8. 逻辑运算 ==========
+
+print "";
+print "=== 逻辑 ===";
+
+print true and true;     // true
+print true and false;    // false
+print false or true;     // true
+print not false;         // true
+print not true;          // false
+
+// ========== 9. 真值规则 ==========
+
+print "";
+print "=== 真值规则 ===";
+
+if (0) { print "0 is true"; } else { print "0 is false"; }
+if ("") { print "empty is true"; } else { print "empty is false"; }
+if (nil) { print "nil is true"; } else { print "nil is false"; }
+if (false) { print "false is true"; } else { print "false is false"; }
+if (1) { print "1 is true"; } else { print "1 is false"; }
+if ("hi") { print "hi is true"; } else { print "hi is false"; }
+
+// ========== 10. 条件语句 ==========
+
+print "";
+print "=== if / else if / else ===";
+
+let score = 85;
+if (score >= 90) {
+    print "A";
+} else if (score >= 80) {
+    print "B";
+} else if (score >= 70) {
+    print "C";
+} else {
+    print "D";
+}
+
+// ========== 11. while 循环 ==========
+
+print "";
+print "=== while ===";
+
+let i = 0;
+let sum = 0;
+while (i < 5) {
+    sum = sum + i;
+    i = i + 1;
+}
+print sum;  // 0+1+2+3+4 = 10
+
+// ========== 12. for 循环 ==========
+
+print "";
+print "=== for ===";
+
+// 标准 for
+let fact = 1;
+for (let n = 1; n <= 6; n = n + 1) {
+    fact = fact * n;
+}
+print fact;  // 720
+
+// 省略初始化
+let j = 0;
+for (; j < 3; j = j + 1) {
+    print j;
+}
+
+// ========== 13. break / continue ==========
+
+print "";
+print "=== break / continue ===";
+
+// break 跳出循环
+for (let k = 0; k < 100; k = k + 1) {
+    if (k == 5) { break; }
+    print k;  // 0 1 2 3 4
+}
+
+// continue 跳过当前迭代
+for (let m = 0; m < 6; m = m + 1) {
+    if (m == 3) { continue; }
+    print m;  // 0 1 2 4 5
+}
+
+// ========== 14. 函数 ==========
+
+print "";
+print "=== 函数 ===";
+
+fn add(x, y) {
+    return x + y;
+}
+print add(3, 4);  // 7
+
+fn factorial(n) {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+print factorial(5);  // 120
+
+// 无返回值的函数
+fn greet(name) {
+    print "hello " + name;
+}
+greet("hul");
+
+// ========== 15. 作用域 ==========
+
+print "";
+print "=== 作用域 ===";
+
+let outer = 1;
+{
+    let inner = 2;
+    print outer + inner;  // 3
+}
+print outer;  // 1
+//print inner;  // 会报错: Undefined variable
+
+// ========== 全部完成 ==========
+print "";
+print "=== done ===";
